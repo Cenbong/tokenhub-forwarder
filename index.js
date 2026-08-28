@@ -118,6 +118,13 @@ app.post('/v1/chat/completions', async (request, reply) => {
   }
 
   if (!cfg.apiKey) {
+    // 尝试从请求头获取 API Key
+    const requestApiKey = request.headers['x-api-key'];
+    if (requestApiKey) {
+      cfg.apiKey = requestApiKey;
+    }
+  }
+  if (!cfg.apiKey) {
     return reply.status(502).send({
       error: { message: `厂商 ${targetProvider} API Key 未配置`, type: 'provider_error' },
     });
