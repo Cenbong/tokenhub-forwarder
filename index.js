@@ -118,11 +118,15 @@ app.post('/v1/chat/completions', async (request, reply) => {
   }
 
   if (!cfg.apiKey) {
-    // 尝试从请求头获取 API Key
+    // 尝试从请求头获取 API Key（主服务器传递）
     const requestApiKey = request.headers['x-api-key'];
     if (requestApiKey) {
       cfg.apiKey = requestApiKey;
     }
+  }
+  // 如果请求头有 Key，优先使用（覆盖环境变量中的旧 Key）
+  if (request.headers['x-api-key']) {
+    cfg.apiKey = request.headers['x-api-key'];
   }
   if (!cfg.apiKey) {
     return reply.status(502).send({
