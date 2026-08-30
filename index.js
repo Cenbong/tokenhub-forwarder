@@ -13,52 +13,77 @@ const PROVIDERS = {
     baseUrl: 'https://api.openai.com/v1',
     apiKey: process.env.OPENAI_API_KEY || '',
     models: ['gpt-4o', 'gpt-4o-mini', 'o1', 'o3'],
+    modelMap: {}, // 无需映射
   },
   groq: {
     baseUrl: 'https://api.groq.com/openai/v1',
     apiKey: process.env.GROQ_API_KEY || '',
-    models: ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'qwen-3.6-27b', 'groq-compound', 'llama-3.3-70b'],
+    models: ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768', 'llama-3.3-70b-specdec'],
+    modelMap: {
+      'qwen-2.5-72b': 'mixtral-8x7b-32768',
+    },
   },
   gemini: {
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
     apiKey: process.env.GEMINI_API_KEY || '',
     models: ['gemini-3.6-flash', 'gemini-2.0-flash-lite', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+    modelMap: {},
   },
   openrouter: {
     baseUrl: 'https://openrouter.ai/api/v1',
     apiKey: process.env.OPENROUTER_API_KEY || '',
     models: ['claude-sonnet-4', 'gpt-4o', 'gemini-2.0-flash', 'deepseek-chat'],
+    modelMap: {
+      'llama-3.3-70b': 'meta-llama/llama-3.3-70b-instruct',
+      'qwen-2.5-72b': 'qwen/qwen-2.5-72b-instruct',
+      'mistral-large': 'mistralai/mistral-large',
+    },
   },
   anthropic: {
     baseUrl: 'https://api.anthropic.com/v1',
     apiKey: process.env.ANTHROPIC_API_KEY || '',
     models: ['claude-sonnet-4', 'claude-3.5-haiku'],
     anthropic: true,
+    modelMap: {},
   },
   nvidia: {
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     apiKey: process.env.NVIDIA_NIM_API_KEY || '',
-    models: ['meta/llama-3.1-70b-instruct', 'meta/llama-3.1-8b-instruct', 'deepseek-ai/deepseek-r1', 'google/gemma-2-27b-it'],
+    models: ['meta/llama-3.2-11b-vision-instruct', 'meta/llama-3.2-90b-vision-instruct'],
+    // 映射：短名称 → NVIDIA NIM 可用模型（仅已验证的模型）
+    modelMap: {
+      'llama-3.1-8b': 'meta/llama-3.2-11b-vision-instruct',
+      'llama-3.1-70b': 'meta/llama-3.2-11b-vision-instruct',
+      'llama-3.3-70b': 'meta/llama-3.2-90b-vision-instruct',
+    },
   },
   cerebras: {
     baseUrl: 'https://api.cerebras.ai/v1',
     apiKey: process.env.CEREBRAS_API_KEY || '',
     models: ['llama3.1-8b', 'gpt-oss-120b'],
+    modelMap: {},
   },
   mistral: {
     baseUrl: 'https://api.mistral.ai/v1',
     apiKey: process.env.MISTRAL_API_KEY || '',
-    models: ['mistral-small', 'mistral-large', 'codestral'],
+    models: ['mistral-large-latest', 'codestral-latest', 'mistral-small-latest'],
+    modelMap: {
+      'mistral-large': 'mistral-large-latest',
+      'mistral-small': 'mistral-small-latest',
+      'codestral': 'codestral-latest',
+    },
   },
   github: {
     baseUrl: 'https://models.github.ai/inference/v1',
     apiKey: process.env.GITHUB_API_KEY || '',
     models: ['gpt-4o-mini'],
+    modelMap: {},
   },
   huggingface: {
     baseUrl: 'https://router.huggingface.co/v1',
     apiKey: process.env.HUGGINGFACE_API_KEY || '',
     models: ['deepseek-ai/DeepSeek-V4-Flash', 'microsoft/Phi-3.5-mini-instruct'],
+    modelMap: {},
   },
 };
 
@@ -66,7 +91,22 @@ const PROVIDERS = {
 const MODEL_PROVIDER = {};
 for (const [code, cfg] of Object.entries(PROVIDERS)) {
   for (const m of cfg.models) {
-    MODEL_PROVIDER[m] = code;
+    // 跳过未配置 Key 的厂商，避免映射到不可用厂商
+    if (cfg.apiKey) {
+      MODEL_PROVIDER[m] = code;
+    }
+  }
+}
+// 明确指定默认厂商优先级（避免被未配置厂商抢占）
+const DEFAULT_PROVIDER_PRIORITY = ['openrouter', 'nvidia', 'gemini', 'huggingface', 'mistral', 'openai', 'groq', 'anthropic', 'github'];
+for (const provider of DEFAULT_PROVIDER_PRIORITY) {
+  if (PROVIDERS[provider]?.apiKey) {
+    // 如果模型未映射，映射到第一个可用厂商
+    for (const m of PROVIDERS[provider].models) {
+      if (!MODEL_PROVIDER[m]) {
+        MODEL_PROVIDER[m] = provider;
+      }
+    }
   }
 }
 
@@ -136,8 +176,9 @@ app.post('/v1/chat/completions', async (request, reply) => {
 
   try {
     // 构建请求
+    const mappedModel = cfg.modelMap?.[model] || model;
     const body = {
-      model,
+      model: mappedModel,
       messages,
       max_tokens: max_tokens || 1024,
       temperature: temperature || 0.7,
