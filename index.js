@@ -7,11 +7,6 @@ import Fastify from 'fastify';
 
 const PORT = parseInt(process.env.PORT || "3000");
 
-// 地区封锁厂商（从香港无法直连，需经 Render 转发）
-const REGION_BLOCKED = new Set(['openai', 'groq', 'gemini', 'mistral', 'anthropic']);
-const RENDER_FORWARDER_URL = process.env.RENDER_FORWARDER_URL || 'https://Routera-forwarder.onrender.com';
-const RENDER_FORWARDER_TOKEN = process.env.RENDER_FORWARDER_TOKEN || process.env.INTERNATIONAL_FORWARDER_TOKEN || 'tokenhub-forwarder';
-
 // ==================== 厂商配置 ====================
 const PROVIDERS = {
   openai: {
@@ -205,33 +200,6 @@ app.post('/v1/chat/completions', async (request, reply) => {
     return reply.status(502).send({
       error: { message: `厂商 ${targetProvider} API Key 未配置`, type: 'provider_error' },
     });
-  }
-
-  // 地区封锁厂商：经 Render 转发（法兰克福无限制）
-  if (REGION_BLOCKED.has(targetProvider)) {
-    const body = {
-      model: cfg.modelMap?.[model] || model,
-      messages,
-      max_tokens: max_tokens || 1024,
-      temperature: temperature || 0.7,
-      stream: stream || false,
-    };
-    const resp = await fetch(`${RENDER_FORWARDER_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Target-Provider': targetProvider,
-        'X-API-Key': cfg.apiKey,
-        'X-Forwarder-Token': RENDER_FORWARDER_TOKEN,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60000),
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      return reply.status(resp.status).send(data);
-    }
-    return reply.send(data);
   }
 
   try {
