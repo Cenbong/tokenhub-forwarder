@@ -1,11 +1,16 @@
 /**
- * TokenHub 国际转发节点
- * 部署在 Railway (境外)，直连国际 AI 厂商
+ * RouterA 国际转发节点
+ * 部署在 Render (法兰克福)，直连国际 AI 厂商
  * 接收主节点转发请求，直接调用厂商 API
  */
 import Fastify from 'fastify';
 
 const PORT = parseInt(process.env.PORT || "3000");
+
+// 地区封锁厂商（从香港无法直连，需经 Render 转发）
+const REGION_BLOCKED = new Set(['openai', 'groq', 'gemini', 'mistral', 'anthropic']);
+const RENDER_FORWARDER_URL = process.env.RENDER_FORWARDER_URL || 'https://Routera-forwarder.onrender.com';
+const RENDER_FORWARDER_TOKEN = process.env.RENDER_FORWARDER_TOKEN || process.env.INTERNATIONAL_FORWARDER_TOKEN || 'tokenhub-forwarder';
 
 // ==================== 厂商配置 ====================
 const PROVIDERS = {
@@ -113,6 +118,34 @@ for (const provider of DEFAULT_PROVIDER_PRIORITY) {
 // ==================== Fastify Server ====================
 const app = Fastify({ logger: false });
 
+// ============ 键同步端点 ============
+app.post('/sync-keys', async (request, reply) => {
+  const { keys } = request.body || {};
+  if (!keys || typeof keys !== 'object') {
+    return reply.status(400).send({ error: 'keys object required' });
+  }
+  let count = 0;
+  for (const [code, apiKey] of Object.entries(keys)) {
+    if (apiKey && typeof apiKey === 'string' && apiKey.length > 5) {
+      if (PROVIDERS[code]) {
+        PROVIDERS[code].apiKey = apiKey;
+        count++;
+      }
+    }
+  }
+  // 重建模型映射
+  for (const k of Object.keys(MODEL_PROVIDER)) delete MODEL_PROVIDER[k];
+  for (const [code, cfg] of Object.entries(PROVIDERS)) {
+    for (const m of cfg.models) {
+      if (cfg.apiKey) {
+        MODEL_PROVIDER[m] = code;
+      }
+    }
+  }
+  console.log(`[RouterA Forwarder] sync-keys: ${count} keys updated`);
+  return { status: 'ok', synced: count };
+});
+
 // ============ 健康检查 ============
 app.get('/health', async () => ({
   status: 'ok',
@@ -172,6 +205,33 @@ app.post('/v1/chat/completions', async (request, reply) => {
     return reply.status(502).send({
       error: { message: `厂商 ${targetProvider} API Key 未配置`, type: 'provider_error' },
     });
+  }
+
+  // 地区封锁厂商：经 Render 转发（法兰克福无限制）
+  if (REGION_BLOCKED.has(targetProvider)) {
+    const body = {
+      model: cfg.modelMap?.[model] || model,
+      messages,
+      max_tokens: max_tokens || 1024,
+      temperature: temperature || 0.7,
+      stream: stream || false,
+    };
+    const resp = await fetch(`${RENDER_FORWARDER_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Target-Provider': targetProvider,
+        'X-API-Key': cfg.apiKey,
+        'X-Forwarder-Token': RENDER_FORWARDER_TOKEN,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60000),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      return reply.status(resp.status).send(data);
+    }
+    return reply.send(data);
   }
 
   try {
@@ -287,9 +347,9 @@ const start = async () => {
   try {
     await app.listen({ port: PORT, host: '0.0.0.0' });
     const hasKeys = Object.entries(PROVIDERS).filter(([_, c]) => c.apiKey).map(([k]) => k);
-    console.log(`[TokenHub Forwarder] running on port ${PORT}`);
-    console.log(`[TokenHub Forwarder] configured providers: ${hasKeys.join(', ') || 'none'}`);
-    console.log(`[TokenHub Forwarder] endpoint: /v1/chat/completions`);
+    console.log(`[RouterA Forwarder] running on port ${PORT}`);
+    console.log(`[RouterA Forwarder] configured providers: ${hasKeys.join(', ') || 'none'}`);
+    console.log(`[RouterA Forwarder] endpoint: /v1/chat/completions`);
   } catch (e) {
     console.error('Failed to start:', e);
     process.exit(1);
