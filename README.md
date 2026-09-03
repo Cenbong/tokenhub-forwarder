@@ -1,6 +1,6 @@
-# TokenHub 国际转发节点
+# RouterA 国际转发节点
 
-TokenHub 国际转发节点 — 直连国际 AI 厂商 API
+RouterA 国际转发节点 — 直连国际 AI 厂商 API
 
 ## 部署到 Koyeb（推荐）
 
